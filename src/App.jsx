@@ -441,7 +441,7 @@ function App() {
               onClick={() => setActiveTab("videos")}
               className={`pb-2 ${
                 activeTab === "videos"
-                  ? "border-b-2 border-blue-500 font-semibold text-blue-600"
+                  ? "border-b-2 border-blue-500 font-semibold text-blue-500"
                   : "text-gray-600 hover:text-blue-500"
               }`}
             >
@@ -451,7 +451,7 @@ function App() {
               onClick={() => setActiveTab("downloads")}
               className={`pb-2 ${
                 activeTab === "downloads"
-                  ? "border-b-2 border-blue-500 font-semibold text-blue-600"
+                  ? "border-b-2 border-blue-500 font-semibold text-blue-500"
                   : "text-gray-600 hover:text-blue-500"
               }`}
             >
@@ -679,14 +679,16 @@ function App() {
                       >
                         Download &amp; Delete
                       </button>
-                      <a
-                        href={`http://192.168.8.186:5000/download-file?file=${encodeURIComponent(
-                          file
-                        )}`}
+                      <button
+                        onClick={() => {
+                          window.location.href = `http://192.168.8.186:5000/download-file?file=${encodeURIComponent(
+                            file
+                          )}`;
+                        }}
                         className="bg-green-400 text-white px-3 py-1 rounded hover:bg-green-700 transition"
                       >
                         Download Only
-                      </a>
+                      </button>
                       <button
                         onClick={() => deleteFile(file)}
                         className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700 transition"
@@ -767,13 +769,13 @@ function App() {
               <div className="flex justify-end gap-4">
                 <button
                   onClick={() => setShowRangeModal(false)}
-                  className="px-6 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-white transition-all font-medium"
+                  className="px-6 py-2.5 rounded-xl bg-gray-500 hover:bg-gray-500 text-white transition-all font-medium"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={confirmRangeSelection}
-                  className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-green-400 transition-all shadow-sm font-medium"
+                  className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-sm font-medium"
                 >
                   Download Segment
                 </button>

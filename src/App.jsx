@@ -7,8 +7,10 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // For showing a spinner or “downloading…” status on a per-video basis
+  // For showing a spinner on a per-video basis
   const [downloadingVideos, setDownloadingVideos] = useState({});
+  // The IDs of videos currently in queue or in progress
+  const [videosInQueue, setVideosInQueue] = useState([]);
 
   // Count how many downloads completed
   const [downloadCount, setDownloadCount] = useState(0);
@@ -28,38 +30,102 @@ function App() {
   const [activeTab, setActiveTab] = useState("videos");
 
   /********************************************************************
-   * 1. THE QUEUE
+   * 1. THE TASK-BASED QUEUE
    ********************************************************************/
-  // Each item in the queue is a function that returns a Promise (the actual fetch).
+  // Each item in the queue is now an OBJECT describing what to do.
+  // e.g. { id, type, video, startTime, endTime, abortController }
   const [downloadQueue, setDownloadQueue] = useState([]);
-  // A boolean to track if we're actively processing a download now.
   const [isDownloading, setIsDownloading] = useState(false);
 
-  // Whenever we finish a download, we check if there's more in the queue.
+  // Helper to add tasks to the queue
+  const queueTask = (task) => {
+    setDownloadQueue((prev) => [...prev, task]);
+  };
+
+  // The main effect that processes the first item in the queue if we're idle
   useEffect(() => {
-    // If NOT currently downloading & we have tasks in the queue, process the first one
     if (!isDownloading && downloadQueue.length > 0) {
+      // we have something to download and we're not currently busy
       setIsDownloading(true);
 
-      // Take the first task from the queue
-      const [nextTask, ...rest] = downloadQueue;
-      setDownloadQueue(rest);
+      const currentTask = downloadQueue[0];
+      // Mark that this video's "downloading" = true
+      setDownloadingVideos((prev) => ({ ...prev, [currentTask.id]: true }));
 
-      // Execute that task (which triggers the actual fetch).
-      nextTask()
+      runTask(currentTask)
         .catch((err) => {
           console.error("Queue task failed:", err);
         })
         .finally(() => {
-          // Mark as done, so we can check for the next item
+          // Remove the task from the queue
+          setDownloadQueue((prev) => prev.slice(1));
+
+          // remove from videosInQueue
+          setVideosInQueue((prev) =>
+            prev.filter((vid) => vid !== currentTask.id)
+          );
+
+          // Mark as not downloading
+          setDownloadingVideos((prev) => ({
+            ...prev,
+            [currentTask.id]: false,
+          }));
           setIsDownloading(false);
         });
     }
   }, [downloadQueue, isDownloading]);
 
-  // A helper to add tasks to the queue
-  const enqueueDownload = (taskFn) => {
-    setDownloadQueue((prev) => [...prev, taskFn]);
+  // The function that performs the actual fetch(es)
+  // We look at "task.type" to figure out which fetch to do.
+  const runTask = async (task) => {
+    switch (task.type) {
+      case "mp3Range":
+        // Download MP3 with start/end time
+        return actuallyDownloadMP3(
+          task.video,
+          task.startTime,
+          task.endTime,
+          task.abortController
+        );
+
+      case "mp3Simple":
+        // Download normal MP3 (with music)
+        return actuallyDownloadMP3Simple(task.video, task.abortController);
+
+      case "mp3NoMusic":
+        // Download no-music version of MP3 (startTime/endTime = null)
+        return actuallyDownloadMP3(
+          task.video,
+          null,
+          null,
+          task.abortController
+        );
+
+      case "batch":
+        return actuallyBatchDownloadAllVideos(task.abortController);
+
+      default:
+        throw new Error("Unknown task type: " + task.type);
+    }
+  };
+
+  // This is how you could remove a queued task by ID (before it starts)
+  // For instance, if you have a "Cancel" button on the queued video.
+  const cancelTask = (videoId) => {
+    setDownloadQueue((prev) => {
+      return prev.filter((task) => {
+        // If you wanted to allow in-progress cancel, check if it's the first task
+        // and call task.abortController.abort(). For example:
+        if (task.id === videoId) {
+          // If desired, abort mid-fetch:
+          task.abortController?.abort();
+        }
+        return task.id !== videoId;
+      });
+    });
+
+    // also remove from videosInQueue
+    setVideosInQueue((prev) => prev.filter((id) => id !== videoId));
   };
 
   /********************************************************************
@@ -75,7 +141,6 @@ function App() {
     setDownloadCount(0);
 
     try {
-      // Example POST to your server
       const response = await fetch("http://192.168.8.186:5000/fetch-videos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -127,9 +192,14 @@ function App() {
   /********************************************************************
    * 3. "WORKER" FUNCTIONS (the actual fetch calls).
    ********************************************************************/
-
   // A. Download MP3 with optional segment
-  const actuallyDownloadMP3 = (video, startTime = null, endTime = null) => {
+  const actuallyDownloadMP3 = async (
+    video,
+    startTime = null,
+    endTime = null,
+    abortController
+  ) => {
+    // Mark it in queue/downloading
     setDownloadingVideos((prev) => ({ ...prev, [video.id]: true }));
 
     const payload = {
@@ -143,29 +213,23 @@ function App() {
       payload.endTime = endTime;
     }
 
-    return fetch("http://192.168.8.186:5000/download-mp3", {
+    const response = await fetch("http://192.168.8.186:5000/download-mp3", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    })
-      .then((r) => r.json())
-      .then((result) => {
-        if (!result.skipped) {
-          setDownloadCount((prev) => prev + 1);
-          setDownloadedFile({ file: result.file, video });
-        }
-      })
-      .catch((err) => {
-        setError(`Failed to download "${video.title}"`);
-        throw err;
-      })
-      .finally(() => {
-        setDownloadingVideos((prev) => ({ ...prev, [video.id]: false }));
-      });
+      signal: abortController?.signal, // enable abort if needed
+    });
+
+    const result = await response.json();
+
+    if (!result.skipped) {
+      setDownloadCount((prev) => prev + 1);
+      setDownloadedFile({ file: result.file, video });
+    }
   };
 
   // B. Download normal MP3 (with music)
-  const actuallyDownloadMP3Simple = (video) => {
+  const actuallyDownloadMP3Simple = async (video, abortController) => {
     setDownloadingVideos((prev) => ({ ...prev, [video.id]: true }));
 
     const payload = {
@@ -175,29 +239,25 @@ function App() {
       folderName: video.folderName || "default",
     };
 
-    return fetch("http://192.168.8.186:5000/download-mp3-simple", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-      .then((r) => r.json())
-      .then((result) => {
-        if (!result.skipped) {
-          setDownloadCount((prev) => prev + 1);
-          setDownloadedFile({ file: result.file, video });
-        }
-      })
-      .catch((err) => {
-        setError(`Failed to download "${video.title}"`);
-        throw err;
-      })
-      .finally(() => {
-        setDownloadingVideos((prev) => ({ ...prev, [video.id]: false }));
-      });
+    const response = await fetch(
+      "http://192.168.8.186:5000/download-mp3-simple",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: abortController?.signal,
+      }
+    );
+
+    const result = await response.json();
+    if (!result.skipped) {
+      setDownloadCount((prev) => prev + 1);
+      setDownloadedFile({ file: result.file, video });
+    }
   };
 
   // C. Batch download
-  const actuallyBatchDownloadAllVideos = () => {
+  const actuallyBatchDownloadAllVideos = async (abortController) => {
     setLoading(true);
 
     const payload = {
@@ -209,54 +269,88 @@ function App() {
       })),
     };
 
-    return fetch("http://192.168.8.186:5000/batch-download-mp3", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-      .then((r) => r.json())
-      .then((result) => {
-        if (result.error) {
-          setError(result.error);
-        } else {
-          // e.g. { file: "tmp/batch_1234.zip" }
-          setBatchDownloadedFile({ file: result.file });
-        }
-      })
-      .catch((err) => {
-        setError("Batch download failed");
-        throw err;
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+    const response = await fetch(
+      "http://192.168.8.186:5000/batch-download-mp3",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: abortController?.signal,
+      }
+    );
+
+    const result = await response.json();
+    if (result.error) {
+      setError(result.error);
+    } else {
+      setBatchDownloadedFile({ file: result.file });
+    }
+    setLoading(false);
   };
 
   /********************************************************************
    * 4. ENQUEUE FUNCTIONS
    ********************************************************************/
+  // Enqueue "No Music" MP3
+  const downloadMP3 = (video, startTime = null, endTime = null) => {
+    const abortController = new AbortController();
 
-  // “Queue” version of normal MP3 download:
-  const downloadMP3 = (video, startTime, endTime) => {
-    enqueueDownload(() => actuallyDownloadMP3(video, startTime, endTime));
+    // For the UI spinner or "in queue" label
+    setVideosInQueue((prev) => [...prev, video.id]);
+
+    // Create the task object
+    queueTask({
+      id: video.id,
+      type: startTime !== null && endTime !== null ? "mp3Range" : "mp3NoMusic",
+      video,
+      startTime,
+      endTime,
+      abortController,
+    });
   };
 
-  // “Queue” version of MP3-simple
+  // Enqueue "Simple MP3" (with music)
   const downloadMP3Simple = (video) => {
-    enqueueDownload(() => actuallyDownloadMP3Simple(video));
+    const abortController = new AbortController();
+
+    setVideosInQueue((prev) => [...prev, video.id]);
+    queueTask({
+      id: video.id,
+      type: "mp3Simple",
+      video,
+      abortController,
+    });
   };
 
-  // “Queue” version of batch
+  // Enqueue a "batch" download
   const batchDownloadAllVideos = () => {
-    enqueueDownload(() => actuallyBatchDownloadAllVideos());
+    const abortController = new AbortController();
+
+    // For UI feedback, consider "videosInQueue = all IDs"
+    setVideosInQueue(videos.map((v) => v.id));
+
+    queueTask({
+      id: "batch-download",
+      type: "batch",
+      abortController,
+    });
   };
 
-  // Download all videos in sequence (No Music example)
+  // Download all videos in sequence (No Music) - Enqueue tasks for each
   const downloadAll = () => {
     setDownloadCount(0);
     setError("");
+
     videos.forEach((video) => {
-      enqueueDownload(() => actuallyDownloadMP3(video));
+      const abortController = new AbortController();
+      setVideosInQueue((prev) => [...prev, video.id]);
+
+      queueTask({
+        id: video.id,
+        type: "mp3NoMusic", // or "mp3Range" if you want
+        video,
+        abortController,
+      });
     });
   };
 
@@ -278,7 +372,6 @@ function App() {
     }
   };
 
-  // Auto-load YouTube IFrame to get actual duration
   useEffect(() => {
     if (showRangeModal && selectedVideo) {
       if (!window.YT) {
@@ -313,7 +406,6 @@ function App() {
     }
   }, [showRangeModal, selectedVideo]);
 
-  // Helper
   const formatTime = (seconds) => {
     const minutes = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -354,8 +446,6 @@ function App() {
         setError("No files to delete");
         return;
       }
-
-      //pop up a confirmation dialog
       const confirmDelete = window.confirm(
         "Are you sure you want to delete all files?"
       );
@@ -478,6 +568,15 @@ function App() {
                     Found {videos.length} video{videos.length > 1 ? "s" : ""}
                   </h2>
                   <div className="flex items-center gap-4">
+                    {/* "Download All" (No Music) */}
+
+                    <button
+                      onClick={downloadAll}
+                      className="bg-blue-600 text-white px-6 py-3 rounded-xl hover:bg-blue-700 transition-all transform hover:-translate-y-1 hover:shadow-md font-medium"
+                    >
+                      Enqueue “Download All” (No Music)
+                    </button>
+
                     <button
                       onClick={batchDownloadAllVideos}
                       className="bg-green-400 text-white px-6 py-3 rounded-xl hover:bg-green-700 transition-all transform hover:-translate-y-1 hover:shadow-md font-medium flex items-center gap-2"
@@ -524,11 +623,14 @@ function App() {
                         </a>
 
                         <div className="mt-5 flex flex-wrap gap-2">
-                          {/* Only disable if THIS exact video is currently in progress */}
+                          {/* No Music */}
                           <button
                             onClick={() => downloadMP3(video)}
-                            disabled={downloadingVideos[video.id]}
-                            className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1 font-medium text-sm"
+                            disabled={
+                              downloadingVideos[video.id] ||
+                              videosInQueue.includes(video.id)
+                            }
+                            className="flex-1 bg-gray-200 hover:bg-gray-300 disabled:bg-gray-400 text-gray-800 py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1 font-medium text-sm"
                           >
                             {downloadingVideos[video.id] ? (
                               <>
@@ -552,14 +654,41 @@ function App() {
                                 </svg>
                                 Loading...
                               </>
+                            ) : videosInQueue.includes(video.id) ? (
+                              <>
+                                <svg
+                                  className="animate-spin h-4 w-4"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <circle
+                                    className="opacity-25"
+                                    cx="12"
+                                    cy="12"
+                                    r="10"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                  ></circle>
+                                  <path
+                                    className="opacity-75"
+                                    fill="currentColor"
+                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                  ></path>
+                                </svg>
+                                In Queue..
+                              </>
                             ) : (
                               "MP3 No Music"
                             )}
                           </button>
+
+                          {/* Simple MP3 */}
                           <button
                             onClick={() => downloadMP3Simple(video)}
-                            disabled={downloadingVideos[video.id]}
-                            className="flex-1 bg-green-400 hover:bg-green-500 text-white py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1 font-medium text-sm"
+                            disabled={
+                              downloadingVideos[video.id] ||
+                              videosInQueue.includes(video.id)
+                            }
+                            className="flex-1 bg-green-400 hover:bg-green-500 disabled:bg-green-600 text-white py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1 font-medium text-sm"
                           >
                             {downloadingVideos[video.id] ? (
                               <>
@@ -582,6 +711,28 @@ function App() {
                                   ></path>
                                 </svg>
                                 Loading...
+                              </>
+                            ) : videosInQueue.includes(video.id) ? (
+                              <>
+                                <svg
+                                  className="animate-spin h-4 w-4"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <circle
+                                    className="opacity-25"
+                                    cx="12"
+                                    cy="12"
+                                    r="10"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                  ></circle>
+                                  <path
+                                    className="opacity-75"
+                                    fill="currentColor"
+                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                  ></path>
+                                </svg>
+                                In Queue..
                               </>
                             ) : (
                               "MP3"
@@ -590,27 +741,78 @@ function App() {
                         </div>
 
                         <div className="mt-4 flex gap-2">
+                          {/* Range */}
                           <button
                             onClick={() => openRangeModal(video)}
-                            disabled={downloadingVideos[video.id]}
-                            className="flex-1 bg-indigo-500 text-white py-2 px-4 rounded-lg hover:bg-indigo-600 transition-all flex items-center justify-center gap-2 font-medium"
+                            disabled={
+                              downloadingVideos[video.id] ||
+                              videosInQueue.includes(video.id)
+                            }
+                            className="flex-1 bg-indigo-500 disabled:bg-indigo-700 text-white py-2 px-4 rounded-lg hover:bg-indigo-600 transition-all flex items-center justify-center gap-2 font-medium"
                           >
-                            Select Range
+                            {downloadingVideos[video.id] ? (
+                              <>
+                                <svg
+                                  className="animate-spin h-4 w-4"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <circle
+                                    className="opacity-25"
+                                    cx="12"
+                                    cy="12"
+                                    r="10"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                  ></circle>
+                                  <path
+                                    className="opacity-75"
+                                    fill="currentColor"
+                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                  ></path>
+                                </svg>
+                                Loading...
+                              </>
+                            ) : videosInQueue.includes(video.id) ? (
+                              <>
+                                <svg
+                                  className="animate-spin h-4 w-4"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <circle
+                                    className="opacity-25"
+                                    cx="12"
+                                    cy="12"
+                                    r="10"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                  ></circle>
+                                  <path
+                                    className="opacity-75"
+                                    fill="currentColor"
+                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                  ></path>
+                                </svg>
+                                In Queue..
+                              </>
+                            ) : (
+                              "Select Range"
+                            )}
                           </button>
+
+                          {/* Cancel if in queue and NOT currently downloading */}
+                          {videosInQueue.includes(video.id) &&
+                            !downloadingVideos[video.id] && (
+                              <button
+                                onClick={() => cancelTask(video.id)}
+                                className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-all flex items-center justify-center gap-1 font-medium"
+                              >
+                                Cancel
+                              </button>
+                            )}
                         </div>
                       </div>
                     </div>
                   ))}
-                </div>
-
-                {/* "Download All" (No Music) - enqueues one task for each video. */}
-                <div className="mt-8">
-                  <button
-                    onClick={downloadAll}
-                    className="bg-blue-600 text-white px-6 py-3 rounded-xl hover:bg-blue-700 transition-all transform hover:-translate-y-1 hover:shadow-md font-medium"
-                  >
-                    Enqueue “Download All” (No Music)
-                  </button>
                 </div>
               </div>
             )}
@@ -649,7 +851,7 @@ function App() {
                 </button>
                 <button
                   onClick={handleDeleteAll}
-                  className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
+                  className="bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700 transition"
                 >
                   Delete All
                 </button>
@@ -675,7 +877,7 @@ function App() {
                             deleteFile(file);
                           }, 10000);
                         }}
-                        className="bg-green-400 text-white px-3 py-1 rounded hover:bg-green-700 transition"
+                        className="bg-purple-400 text-white px-3 py-1 rounded hover:bg-purple-700 transition"
                       >
                         Download &amp; Delete
                       </button>

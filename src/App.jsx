@@ -141,7 +141,7 @@ function App() {
     setDownloadCount(0);
 
     try {
-      const response = await fetch("http://192.168.8.186:5000/fetch-videos", {
+      const response = await fetch("http://localhost:8001/fetch-videos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ channelUrl }),
@@ -161,7 +161,7 @@ function App() {
 
   const fetchDownloads = async () => {
     try {
-      const response = await fetch("http://192.168.8.186:5000/list-downloads");
+      const response = await fetch("http://localhost:8001/list-downloads");
       const data = await response.json();
       setDownloads(data.files || []);
     } catch (err) {
@@ -176,7 +176,7 @@ function App() {
   const deleteFile = async (relativePath) => {
     try {
       const response = await fetch(
-        `http://192.168.8.186:5000/delete-file?file=${encodeURIComponent(
+        `http://localhost:8001/delete-file?file=${encodeURIComponent(
           relativePath
         )}`,
         { method: "DELETE" }
@@ -213,7 +213,7 @@ function App() {
       payload.endTime = endTime;
     }
 
-    const response = await fetch("http://192.168.8.186:5000/download-mp3", {
+    const response = await fetch("http://localhost:8001/download-mp3", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -239,15 +239,12 @@ function App() {
       folderName: video.folderName || "default",
     };
 
-    const response = await fetch(
-      "http://192.168.8.186:5000/download-mp3-simple",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: abortController?.signal,
-      }
-    );
+    const response = await fetch("http://localhost:8001/download-mp3-simple", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: abortController?.signal,
+    });
 
     const result = await response.json();
     if (!result.skipped) {
@@ -269,15 +266,12 @@ function App() {
       })),
     };
 
-    const response = await fetch(
-      "http://192.168.8.186:5000/batch-download-mp3",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: abortController?.signal,
-      }
-    );
+    const response = await fetch("http://localhost:8001/batch-download-mp3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: abortController?.signal,
+    });
 
     const result = await response.json();
     if (result.error) {
@@ -417,7 +411,7 @@ function App() {
    ********************************************************************/
   const handleDownloadOnly = () => {
     if (!downloadedFile) return;
-    window.location.href = `http://192.168.8.186:5000/download-file?file=${encodeURIComponent(
+    window.location.href = `http://localhost:8001/download-file?file=${encodeURIComponent(
       downloadedFile.file
     )}`;
     setDownloadedFile(null);
@@ -425,7 +419,7 @@ function App() {
 
   const handleDownloadAndDelete = () => {
     if (!downloadedFile) return;
-    window.location.href = `http://192.168.8.186:5000/download-file?file=${encodeURIComponent(
+    window.location.href = `http://localhost:8001/download-file?file=${encodeURIComponent(
       downloadedFile.file
     )}`;
     setTimeout(() => {
@@ -870,7 +864,7 @@ function App() {
                     <div className="flex gap-3">
                       <button
                         onClick={() => {
-                          window.location.href = `http://192.168.8.186:5000/download-file?file=${encodeURIComponent(
+                          window.location.href = `http://localhost:8001/download-file?file=${encodeURIComponent(
                             file
                           )}`;
                           setTimeout(() => {
@@ -883,7 +877,7 @@ function App() {
                       </button>
                       <button
                         onClick={() => {
-                          window.location.href = `http://192.168.8.186:5000/download-file?file=${encodeURIComponent(
+                          window.location.href = `http://localhost:8001/download-file?file=${encodeURIComponent(
                             file
                           )}`;
                         }}
@@ -1050,7 +1044,7 @@ function App() {
               <div className="flex gap-2">
                 <button
                   onClick={() => {
-                    window.location.href = `http://192.168.8.186:5000/download-file?file=${encodeURIComponent(
+                    window.location.href = `http://localhost:8001/download-file?file=${encodeURIComponent(
                       batchDownloadedFile.file
                     )}`;
                     setTimeout(() => {
@@ -1064,7 +1058,7 @@ function App() {
                 </button>
                 <button
                   onClick={() => {
-                    window.location.href = `http://192.168.8.186:5000/download-file?file=${encodeURIComponent(
+                    window.location.href = `http://localhost:8001/download-file?file=${encodeURIComponent(
                       batchDownloadedFile.file
                     )}`;
                     setBatchDownloadedFile(null);

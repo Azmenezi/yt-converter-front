@@ -22,12 +22,17 @@ function App() {
   const [rangeEnd, setRangeEnd] = useState(0);
   const [duration, setDuration] = useState(300);
 
-  // MODALS for “Downloaded File”
+  // MODALS for "Downloaded File"
   const [downloadedFile, setDownloadedFile] = useState(null);
   const [batchDownloadedFile, setBatchDownloadedFile] = useState(null);
 
   // Tabs
   const [activeTab, setActiveTab] = useState("videos");
+
+  // External Audio Processing
+  const [externalUrl, setExternalUrl] = useState("");
+  const [externalFilename, setExternalFilename] = useState("");
+  const [processingExternal, setProcessingExternal] = useState(false);
 
   /********************************************************************
    * 1. THE TASK-BASED QUEUE
@@ -103,6 +108,13 @@ function App() {
 
       case "batch":
         return actuallyBatchDownloadAllVideos(task.abortController);
+
+      case "external":
+        return actuallyProcessExternalAudio(
+          task.url,
+          task.filename,
+          task.abortController
+        );
 
       default:
         throw new Error("Unknown task type: " + task.type);
@@ -282,6 +294,44 @@ function App() {
     setLoading(false);
   };
 
+  // D. Process external audio
+  const actuallyProcessExternalAudio = async (
+    url,
+    filename,
+    abortController
+  ) => {
+    setProcessingExternal(true);
+
+    const payload = {
+      url,
+      filename,
+    };
+
+    const response = await fetch(
+      "http://localhost:8001/process-external-audio",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: abortController?.signal,
+      }
+    );
+
+    const result = await response.json();
+    if (result.error) {
+      setError(result.error);
+    } else if (!result.skipped) {
+      setDownloadCount((prev) => prev + 1);
+      setDownloadedFile({
+        file: result.file,
+        video: { title: filename || "External Audio" },
+      });
+    }
+
+    setProcessingExternal(false);
+    fetchDownloads();
+  };
+
   /********************************************************************
    * 4. ENQUEUE FUNCTIONS
    ********************************************************************/
@@ -328,6 +378,29 @@ function App() {
       type: "batch",
       abortController,
     });
+  };
+
+  // Enqueue external audio processing
+  const processExternalAudio = () => {
+    if (!externalUrl.trim()) {
+      setError("Please enter an audio URL");
+      return;
+    }
+    setError("");
+
+    const abortController = new AbortController();
+    const taskId = `external-${Date.now()}`;
+
+    queueTask({
+      id: taskId,
+      type: "external",
+      url: externalUrl,
+      filename: externalFilename,
+      abortController,
+    });
+
+    setExternalUrl("");
+    setExternalFilename("");
   };
 
   // Download all videos in sequence (No Music) - Enqueue tasks for each
@@ -518,6 +591,67 @@ function App() {
           )}
         </div>
 
+        {/* External Audio Processing Section */}
+        <div className="mb-8 bg-white shadow-lg rounded-xl p-6 transition-all">
+          <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+            Process External Audio
+          </h2>
+          <p className="text-gray-600 mb-4">
+            Enter any audio/video URL to process through the vocal extraction
+            pipeline
+          </p>
+
+          <div className="flex flex-col gap-4">
+            <input
+              type="text"
+              placeholder="Enter audio/video URL (any website, not just YouTube)"
+              value={externalUrl}
+              onChange={(e) => setExternalUrl(e.target.value)}
+              className="w-full text-black p-4 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+
+            <input
+              type="text"
+              placeholder="Custom filename (optional)"
+              value={externalFilename}
+              onChange={(e) => setExternalFilename(e.target.value)}
+              className="w-full text-black p-4 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+
+            <button
+              onClick={processExternalAudio}
+              disabled={processingExternal || !externalUrl.trim()}
+              className="bg-purple-600 text-white px-6 py-4 rounded-lg hover:bg-purple-700 transition-all disabled:opacity-70 disabled:cursor-not-allowed font-medium"
+            >
+              {processingExternal ? (
+                <span className="flex items-center justify-center gap-2">
+                  <svg
+                    className="animate-spin h-5 w-5 text-white"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  Processing...
+                </span>
+              ) : (
+                "Extract Vocals from URL"
+              )}
+            </button>
+          </div>
+        </div>
+
         {/* Tab Navigation */}
         <div className="flex justify-between border-b mb-6 items-center">
           <div className="flex space-x-6">
@@ -568,7 +702,7 @@ function App() {
                       onClick={downloadAll}
                       className="bg-blue-600 text-white px-6 py-3 rounded-xl hover:bg-blue-700 transition-all transform hover:-translate-y-1 hover:shadow-md font-medium"
                     >
-                      Enqueue “Download All” (No Music)
+                      Enqueue "Download All" (No Music)
                     </button>
 
                     <button
